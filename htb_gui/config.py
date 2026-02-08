@@ -8,9 +8,20 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file from the same directory as this module
-ENV_FILE = Path(__file__).parent / ".env"
-load_dotenv(ENV_FILE)
+# Load .env file - check multiple locations
+# 1. Package directory (for bundled env)
+# 2. Parent directory (for dev environment: project root)
+# 3. Current working directory (for user running from elsewhere)
+env_paths = [
+    Path(__file__).parent / ".env",        # Inside package
+    Path(__file__).parent.parent / ".env", # Project root (dev)
+    Path.cwd() / ".env"                    # Runtime directory
+]
+
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
 
 # Base configuration
 BASE_URL = "https://labs.hackthebox.com"
