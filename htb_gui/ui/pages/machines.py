@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QLineEdit, QComboBox, QScrollArea, QGridLayout, QSizePolicy
+    QLineEdit, QComboBox, QScrollArea, QGridLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QObject, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -11,8 +11,9 @@ from typing import List, Dict
 
 from api.endpoints import HTBApi
 from models.machine import Machine
-from ui.styles import HTB_TEXT_DIM
+from ui.styles import HTB_TEXT_DIM, HTB_TEXT_MAIN
 from ui.widgets.machine_card import MachineCard
+from ui.widgets.modern_widgets import ModernButton
 from utils.debug import debug_log
 from utils.image_cache import get_cached_image, save_to_cache
 
@@ -46,6 +47,7 @@ class MachinesPage(QWidget):
         self._network_manager = QNetworkAccessManager(self)
         self._network_manager.finished.connect(self._on_avatar_loaded)
         self._machine_cards: Dict[int, MachineCard] = {}  # machine_id -> card
+        self._zombie_threads: List[QThread] = [] # Prevent premature destruction
         self._setup_ui()
     
     def _setup_ui(self):
@@ -56,21 +58,16 @@ class MachinesPage(QWidget):
         # Header + search bar
         header = QHBoxLayout()
         title = QLabel("Machines")
-        title.setStyleSheet("font-size: 26px; font-weight: 700; letter-spacing: -0.5px;")
+        title.setStyleSheet(f"font-size: 26px; font-weight: 700; letter-spacing: -0.5px; color: {HTB_TEXT_MAIN};")
         header.addWidget(title)
         header.addStretch()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by name...")
+        self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(280)
         self.search.setMaximumWidth(400)
         self.search.setMinimumHeight(42)
-        self.search.setStyleSheet("""
-            QLineEdit {
-                font-size: 14px;
-                padding: 10px 16px;
-                border-radius: 10px;
-            }
-        """)
+        # Global styles handle the rest
         self.search.textChanged.connect(self._apply_filters)
         header.addWidget(self.search)
         layout.addLayout(header)
@@ -94,8 +91,8 @@ class MachinesPage(QWidget):
         self.count_label = QLabel("")
         self.count_label.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 13px;")
         filters.addWidget(self.count_label)
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
+        
+        refresh_btn = ModernButton(" Refresh", "fa5s.sync-alt", "ghost")
         refresh_btn.clicked.connect(self._force_reload)
         filters.addWidget(refresh_btn)
         layout.addLayout(filters)
@@ -130,15 +127,28 @@ class MachinesPage(QWidget):
         self._worker.error.connect(self._on_error)
         self._thread.start()
     
+    def _safe_cleanup_thread(self, thread: QThread, worker: QObject):
+        if not thread: return
+        if worker:
+            try: worker.disconnect()
+            except: pass
+        if thread.isRunning():
+            self._zombie_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._on_zombie_finished(t))
+            thread.quit()
+        else:
+            thread.deleteLater()
+            if worker: worker.deleteLater()
+
+    def _on_zombie_finished(self, thread: QThread):
+        if thread in self._zombie_threads:
+            self._zombie_threads.remove(thread)
+        thread.deleteLater()
+
     def _cleanup_thread(self):
-        if self._thread:
-            if self._thread.isRunning():
-                self._thread.quit()
-                if not self._thread.wait(3000):
-                    self._thread.terminate()
-                    self._thread.wait(500)
-            self._thread = None
-            self._worker = None
+        self._safe_cleanup_thread(self._thread, self._worker)
+        self._thread = None
+        self._worker = None
 
     def stop_background_tasks(self):
         """Llamado al cerrar la app para evitar QThread destroyed while running."""

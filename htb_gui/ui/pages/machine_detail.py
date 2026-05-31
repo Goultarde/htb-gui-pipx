@@ -1,8 +1,11 @@
 """Machine Detail Page - Borderless HTB Style."""
 
+import re
+from datetime import datetime, timezone
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QLineEdit, QFrame, QMessageBox,
+    QFrame, QMessageBox,
     QScrollArea, QSizePolicy, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QObject, QTimer, QUrl, QSize
@@ -13,11 +16,12 @@ from typing import Optional, List
 from api.endpoints import HTBApi
 from models.machine import Machine
 from ui.styles import (
-    HTB_GREEN, HTB_BG_CARD, HTB_TEXT_DIM,
+    HTB_GREEN, HTB_BG_CARD, HTB_BG_MAIN, HTB_TEXT_DIM,
     DIFF_EASY, DIFF_MEDIUM, DIFF_HARD, DIFF_INSANE,
     BTN_PRIMARY, BTN_DANGER, BTN_DEFAULT
 )
 from ui.widgets.activity_item import ActivityItem
+from ui.widgets.modern_widgets import ModernButton, ModernInput
 from utils.debug import debug_log
 
 
@@ -92,6 +96,52 @@ class ActiveMachineWorker(QObject):
             self.error.emit(str(e))
 
 
+class _ToggleSwitch(QWidget):
+    """A proper iOS-style toggle switch widget."""
+    toggled = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._checked = False
+        self.setFixedSize(40, 22)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool):
+        self._checked = checked
+        self.update()
+
+    def mousePressEvent(self, event):
+        self._checked = not self._checked
+        self.update()
+        self.toggled.emit(self._checked)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        r = h / 2
+
+        # Track
+        if self._checked:
+            p.setBrush(QColor(HTB_GREEN))
+            p.setPen(QColor(HTB_GREEN))
+        else:
+            p.setBrush(QColor("#2a2a3e"))
+            p.setPen(QColor("#555"))
+        p.drawRoundedRect(0, 0, w, h, r, r)
+
+        # Knob
+        knob_r = h - 4
+        x = (w - knob_r - 2) if self._checked else 2
+        p.setBrush(QColor("#ffffff"))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(x, 2, knob_r, knob_r)
+        p.end()
+
+
 class MachineDetailPage(QWidget):
     back_clicked = Signal()
     
@@ -130,7 +180,19 @@ class MachineDetailPage(QWidget):
         self._starting_anim_timer.setInterval(400)
         self._starting_anim_timer.timeout.connect(self._animate_starting)
         self._starting_dots = 0
-        
+        self._zombie_threads: List[QThread] = []
+
+        # --- Auto-Spawn state ---
+        self._auto_spawn_enabled = False
+        self._auto_spawn_countdown_timer = QTimer(self)
+        self._auto_spawn_countdown_timer.setInterval(1000)
+        self._auto_spawn_countdown_timer.timeout.connect(self._auto_spawn_tick)
+        self._release_dt: Optional[datetime] = None
+        self._spawn_attempts = 0
+        self._spawn_phase = "countdown"  # "countdown" | "spawning"
+
+        # Flag Watcher: surveillance globale gérée par MainWindow (voir _setup_clipboard_monitor)
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -139,18 +201,9 @@ class MachineDetailPage(QWidget):
         layout.setSpacing(22)
         
         # Back
-        back_btn = QPushButton("← Back to Machines")
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {HTB_TEXT_DIM};
-                font-weight: 500;
-                padding: 0;
-                text-align: left;
-            }}
-            QPushButton:hover {{ color: {HTB_GREEN}; }}
-        """)
-        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn = ModernButton(" Back to Machines", "fa5s.arrow-left", "ghost")
+        back_btn.setStyleSheet(back_btn.styleSheet() + "text-align: left; padding-left: 0;")
+        back_btn.setFixedWidth(200)
         back_btn.clicked.connect(self.back_clicked.emit)
         layout.addWidget(back_btn)
         
@@ -221,7 +274,7 @@ class MachineDetailPage(QWidget):
         # Machine actions: una sola tarjeta (Spawn/Reset/Stop + IP + Flag + status)
         actions_frame = QFrame()
         actions_frame.setObjectName("actions_card")
-        actions_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 14px;")
+        actions_frame.setStyleSheet(f"background-color: {HTB_BG_MAIN}; border-radius: 14px;")
         actions_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         actions_layout = QVBoxLayout(actions_frame)
@@ -234,21 +287,19 @@ class MachineDetailPage(QWidget):
         
         btns_row = QHBoxLayout()
         btns_row.setSpacing(12)
-        self.spawn_btn = QPushButton("▶ Spawn Machine")
-        self.spawn_btn.setStyleSheet(BTN_PRIMARY)
-        self.spawn_btn.setCursor(Qt.PointingHandCursor)
+        
+        self.spawn_btn = ModernButton(" Spawn Machine", "fa5s.play", "primary")
         self.spawn_btn.clicked.connect(lambda: self._do_action("spawn"))
         btns_row.addWidget(self.spawn_btn)
-        self.reset_btn = QPushButton("🔄 Reset")
-        self.reset_btn.setStyleSheet(BTN_DEFAULT)
-        self.reset_btn.setCursor(Qt.PointingHandCursor)
+        
+        self.reset_btn = ModernButton(" Reset", "fa5s.redo", "ghost")
         self.reset_btn.clicked.connect(lambda: self._do_action("reset"))
         btns_row.addWidget(self.reset_btn)
-        self.terminate_btn = QPushButton("⏹ Stop")
-        self.terminate_btn.setStyleSheet(BTN_DANGER)
-        self.terminate_btn.setCursor(Qt.PointingHandCursor)
+        
+        self.terminate_btn = ModernButton(" Stop", "fa5s.stop", "danger")
         self.terminate_btn.clicked.connect(lambda: self._do_action("terminate"))
         btns_row.addWidget(self.terminate_btn)
+        
         btns_row.addStretch()
         actions_layout.addLayout(btns_row)
         
@@ -261,10 +312,8 @@ class MachineDetailPage(QWidget):
         self.ip_display.setStyleSheet(f"color: {HTB_GREEN}; font-size: 16px; font-weight: 600; font-family: monospace; min-width: 140px; background: transparent; border: none;")
         self.ip_display.setCursor(Qt.IBeamCursor)
         ip_row.addWidget(self.ip_display)
-        self.copy_ip_btn = QPushButton("📋 Copy IP")
-        self.copy_ip_btn.setStyleSheet(BTN_DEFAULT)
+        self.copy_ip_btn = ModernButton(" Copy IP", "fa5s.copy", "ghost")
         self.copy_ip_btn.setToolTip("Copy IP to clipboard")
-        self.copy_ip_btn.setCursor(Qt.PointingHandCursor)
         self.copy_ip_btn.clicked.connect(self._copy_ip_to_clipboard)
         ip_row.addWidget(self.copy_ip_btn)
         ip_row.addStretch()
@@ -272,19 +321,36 @@ class MachineDetailPage(QWidget):
         
         flag_row = QHBoxLayout()
         flag_row.setSpacing(12)
-        self.flag_input = QLineEdit()
+        self.flag_input = ModernInput("Enter the flag")
         self.flag_input.setObjectName("flag_input")
-        self.flag_input.setPlaceholderText("Enter the flag")
         self.flag_input.setMinimumHeight(42)
         self.flag_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         flag_row.addWidget(self.flag_input)
-        submit_btn = QPushButton("🚩 Submit Flag")
-        submit_btn.setStyleSheet(BTN_PRIMARY)
-        submit_btn.setCursor(Qt.PointingHandCursor)
+        
+        submit_btn = ModernButton(" Submit Flag", "fa5s.flag", "primary")
         submit_btn.clicked.connect(self._submit_flag)
         flag_row.addWidget(submit_btn)
         actions_layout.addLayout(flag_row)
-        
+
+        # --- Auto-Spawn row ---
+        as_row = QHBoxLayout()
+        as_row.setContentsMargins(0, 4, 0, 4)
+        as_row.setSpacing(8)
+        self.auto_spawn_toggle = _ToggleSwitch()
+        self.auto_spawn_toggle.toggled.connect(self._toggle_auto_spawn)
+        as_row.addWidget(self.auto_spawn_toggle)
+        as_lbl = QLabel("Auto Spawn Machine")
+        as_lbl.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 12px; font-weight: 600;")
+        as_row.addWidget(as_lbl)
+        self.auto_spawn_status = QLabel("")
+        self.auto_spawn_status.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px;")
+        as_row.addWidget(self.auto_spawn_status)
+        as_row.addStretch()
+        self.auto_spawn_row_widget = QWidget()
+        self.auto_spawn_row_widget.setLayout(as_row)
+        self.auto_spawn_row_widget.setVisible(False)
+        actions_layout.addWidget(self.auto_spawn_row_widget)
+
         layout.addWidget(actions_frame)
         
         # Activity timeline
@@ -325,7 +391,35 @@ class MachineDetailPage(QWidget):
         self._activity_countdown.start()
         # HTB solo permite una máquina activa: si esta es la activa, obtener IP desde machine/active
         self._fetch_active_machine_ip()
-    
+
+        # --- Auto-spawn: show toggle if machine has future release date ---
+        self._stop_auto_spawn()
+        self.auto_spawn_toggle.blockSignals(True)
+        self.auto_spawn_toggle.setChecked(False)
+        self.auto_spawn_toggle.blockSignals(False)
+        self.auto_spawn_status.setText("")
+        self._release_dt = None
+        if machine.release_date:
+            try:
+                rd = machine.release_date
+                # Try common formats
+                for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        self._release_dt = datetime.strptime(rd, fmt).replace(tzinfo=timezone.utc)
+                        break
+                    except ValueError:
+                        continue
+                if self._release_dt and self._release_dt > datetime.now(timezone.utc):
+                    self.auto_spawn_row_widget.setVisible(True)
+                    td = self._release_dt - datetime.now(timezone.utc)
+                    self.auto_spawn_status.setText(f"Releases in {self._format_td(td)}")
+                else:
+                    self.auto_spawn_row_widget.setVisible(False)
+            except Exception:
+                self.auto_spawn_row_widget.setVisible(False)
+        else:
+            self.auto_spawn_row_widget.setVisible(False)
+
     def _load_machine_avatar(self):
         """Cargar el avatar de la máquina."""
         if not self._machine or not self._machine.avatar:
@@ -373,12 +467,9 @@ class MachineDetailPage(QWidget):
 
     @Slot(object)
     def _on_active_machine_fetched(self, active):
-        if self._active_machine_thread:
-            if self._active_machine_thread.isRunning():
-                self._active_machine_thread.quit()
-                self._active_machine_thread.wait(2000)
-            self._active_machine_thread = None
-            self._active_machine_worker = None
+        self._safe_cleanup_thread(self._active_machine_thread, self._active_machine_worker)
+        self._active_machine_thread = None
+        self._active_machine_worker = None
         if not self._machine or not active or not active.ip:
             return
         if active.id == self._machine.id:
@@ -425,25 +516,37 @@ class MachineDetailPage(QWidget):
         self._activity_worker.error.connect(self._on_activity_error)
         self._activity_thread.start()
     
+    def _safe_cleanup_thread(self, thread: QThread, worker: QObject):
+        if not thread: return
+        if worker:
+            try: worker.disconnect()
+            except: pass
+        if thread.isRunning():
+            self._zombie_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._on_zombie_finished(t))
+            thread.quit()
+        else:
+            thread.deleteLater()
+            if worker: worker.deleteLater()
+
+    def _on_zombie_finished(self, thread: QThread):
+        if thread in self._zombie_threads:
+            self._zombie_threads.remove(thread)
+        thread.deleteLater()
+
     def _cleanup_activity_thread(self):
-        if self._activity_thread:
-            if self._activity_thread.isRunning():
-                self._activity_thread.quit()
-                if not self._activity_thread.wait(3000):
-                    self._activity_thread.terminate()
-                    self._activity_thread.wait(500)
-            self._activity_thread = None
-            self._activity_worker = None
+        self._safe_cleanup_thread(self._activity_thread, self._activity_worker)
+        self._activity_thread = None
+        self._activity_worker = None
 
     def stop_background_tasks(self):
         self._activity_timer.stop()
         self._activity_countdown.stop()
         self._ip_poll_timer.stop()
+        self._auto_spawn_countdown_timer.stop()
         self._cleanup_action_thread()
         self._cleanup_activity_thread()
-        if self._active_machine_thread and self._active_machine_thread.isRunning():
-            self._active_machine_thread.quit()
-            self._active_machine_thread.wait(2000)
+        self._safe_cleanup_thread(self._active_machine_thread, self._active_machine_worker)
         self._active_machine_thread = None
         self._active_machine_worker = None
 
@@ -538,14 +641,9 @@ class MachineDetailPage(QWidget):
         self._action_thread.start()
     
     def _cleanup_action_thread(self):
-        if self._action_thread:
-            if self._action_thread.isRunning():
-                self._action_thread.quit()
-                if not self._action_thread.wait(3000):
-                    self._action_thread.terminate()
-                    self._action_thread.wait(500)
-            self._action_thread = None
-            self._action_worker = None
+        self._safe_cleanup_thread(self._action_thread, self._action_worker)
+        self._action_thread = None
+        self._action_worker = None
     
     @Slot(dict)
     def _on_action_done(self, data: dict):
@@ -637,11 +735,109 @@ class MachineDetailPage(QWidget):
         self._ip_poll_timer.stop()
         QMessageBox.warning(self, "Error", error)
     
+    # =================================================================
+    # AUTO-SPAWN LOGIC
+    # =================================================================
+
+    @staticmethod
+    def _format_td(td) -> str:
+        """Format timedelta to Xd Xh Xm Xs."""
+        total = int(td.total_seconds())
+        if total < 0:
+            return "0s"
+        d, r = divmod(total, 86400)
+        h, r = divmod(r, 3600)
+        m, s = divmod(r, 60)
+        parts = []
+        if d > 0:
+            parts.append(f"{d}d")
+        if h > 0:
+            parts.append(f"{h}h")
+        if m > 0:
+            parts.append(f"{m}m")
+        parts.append(f"{s}s")
+        return " ".join(parts)
+
+    def _toggle_auto_spawn(self, checked: bool):
+        if checked:
+            if not self._release_dt:
+                self.auto_spawn_toggle.setChecked(False)
+                return
+            self._auto_spawn_enabled = True
+            self._spawn_phase = "countdown"
+            self._spawn_attempts = 0
+            self.auto_spawn_status.setStyleSheet(f"color: {HTB_GREEN}; font-size: 11px; font-weight: 600;")
+            self._auto_spawn_countdown_timer.start()
+            debug_log("AUTO-SPAWN", f"Enabled for release: {self._release_dt.isoformat()}")
+        else:
+            self._stop_auto_spawn()
+
+    def _stop_auto_spawn(self):
+        self._auto_spawn_enabled = False
+        self._auto_spawn_countdown_timer.stop()
+        self.auto_spawn_status.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px;")
+
+    def _auto_spawn_tick(self):
+        """Called every 1 second when auto-spawn is enabled."""
+        if not self._auto_spawn_enabled or not self._release_dt or not self._machine:
+            return
+
+        now = datetime.now(timezone.utc)
+        remaining = (self._release_dt - now).total_seconds()
+
+        if remaining > 10:
+            # Still counting down
+            self._spawn_phase = "countdown"
+            td = self._release_dt - now
+            self.auto_spawn_status.setText(f"\u23f3 {self._format_td(td)} until release")
+        elif remaining > -60:
+            # Within the spawn window: T-10s to T+60s
+            if self._spawn_phase == "countdown":
+                self._spawn_phase = "spawning"
+                self._spawn_attempts = 0
+                debug_log("AUTO-SPAWN", "Entering spawn phase")
+
+            self._spawn_attempts += 1
+            self.auto_spawn_status.setText(
+                f"\U0001f680 Attempting spawn... (#{self._spawn_attempts})"
+            )
+            # Try spawn in thread
+            self._attempt_auto_spawn()
+        else:
+            # Past T+60s, give up
+            self.auto_spawn_status.setText("\u274c Timeout - spawn window passed")
+            self._stop_auto_spawn()
+            self.auto_spawn_toggle.blockSignals(True)
+            self.auto_spawn_toggle.setChecked(False)
+            self.auto_spawn_toggle.blockSignals(False)
+
+    def _attempt_auto_spawn(self):
+        """Try to spawn machine in a background thread."""
+        try:
+            success, result = HTBApi.spawn_machine(self._machine.id)
+            if success:
+                msg = result.get("message", "Spawned!") if isinstance(result, dict) else str(result)
+                self.auto_spawn_status.setText(f"\u2705 {msg}")
+                self._stop_auto_spawn()
+                self.auto_spawn_toggle.blockSignals(True)
+                self.auto_spawn_toggle.setChecked(False)
+                self.auto_spawn_toggle.blockSignals(False)
+                # Trigger IP polling
+                self._starting_dots = 0
+                self._animate_starting()
+                self._starting_anim_timer.start()
+                self._ip_poll_count = 0
+                self._ip_poll_timer.start()
+                debug_log("AUTO-SPAWN", f"Spawn success: {msg}")
+        except Exception as e:
+            debug_log("AUTO-SPAWN", f"Attempt #{self._spawn_attempts} failed: {e}")
+
     def hideEvent(self, event):
         super().hideEvent(event)
         self._activity_timer.stop()
         self._activity_countdown.stop()
         self._ip_poll_timer.stop()
+        self._auto_spawn_countdown_timer.stop()
         self._cleanup_action_thread()
         self._cleanup_activity_thread()
         if self._active_machine_thread and self._active_machine_thread.isRunning():
@@ -649,4 +845,3 @@ class MachineDetailPage(QWidget):
             self._active_machine_thread.wait(2000)
         self._active_machine_thread = None
         self._active_machine_worker = None
-

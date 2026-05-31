@@ -47,7 +47,19 @@ class SeasonsWorker(QObject):
                 success, result = HTBApi.get_season_machines(self.season_id)
                 if success:
                     raw = [m for m in result.get("data", []) if not m.get("unknown")]
-                    data["machines"] = [Machine.from_api(m) for m in raw]
+                    machines = [Machine.from_api(m) for m in raw]
+                    # Enrich with real owns from machine profile
+                    for machine in machines:
+                        if machine.name and machine.user_owns_count == 0:
+                            try:
+                                ok, profile = HTBApi.get_machine_profile(machine.name)
+                                if ok:
+                                    info = profile.get("info", {})
+                                    machine.user_owns_count = info.get("user_owns_count", 0)
+                                    machine.root_owns_count = info.get("root_owns_count", 0)
+                            except Exception:
+                                pass
+                    data["machines"] = machines
                 
                 success, result = HTBApi.get_season_leaderboard(self.season_id)
                 if success:
@@ -74,6 +86,7 @@ class SeasonsPage(QWidget):
         self._machine_avatar_network = QNetworkAccessManager(self)
         self._machine_avatar_network.finished.connect(self._on_machine_avatar_loaded)
         self._machine_cards = {}
+        self._zombie_threads: List[QThread] = []
         self._setup_ui()
     
     def _setup_ui(self):
@@ -150,15 +163,28 @@ class SeasonsPage(QWidget):
         self.table.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 8px;")
         layout.addWidget(self.table)
     
+    def _safe_cleanup_thread(self, thread: QThread, worker: QObject):
+        if not thread: return
+        if worker:
+            try: worker.disconnect()
+            except: pass
+        if thread.isRunning():
+            self._zombie_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._on_zombie_finished(t))
+            thread.quit()
+        else:
+            thread.deleteLater()
+            if worker: worker.deleteLater()
+
+    def _on_zombie_finished(self, thread: QThread):
+        if thread in self._zombie_threads:
+            self._zombie_threads.remove(thread)
+        thread.deleteLater()
+
     def _cleanup_thread(self):
-        if self._thread:
-            if self._thread.isRunning():
-                self._thread.quit()
-                if not self._thread.wait(3000):
-                    self._thread.terminate()
-                    self._thread.wait(500)
-            self._thread = None
-            self._worker = None
+        self._safe_cleanup_thread(self._thread, self._worker)
+        self._thread = None
+        self._worker = None
 
     def stop_background_tasks(self):
         """Llamado al cerrar la app para evitar QThread destroyed while running."""

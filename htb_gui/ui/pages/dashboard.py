@@ -1,8 +1,8 @@
-"""Dashboard Page - con máquina activa, acciones y activity."""
+"""Dashboard Page - Modern UI."""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy,
-    QPushButton, QLineEdit, QScrollArea, QMessageBox, QApplication,
+    QScrollArea, QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QObject, QUrl, QTimer
 from PySide6.QtGui import QPixmap
@@ -13,11 +13,14 @@ from api.endpoints import HTBApi
 from models.user import User
 from models.connection import ActiveMachine, Connection
 from ui.styles import (
-    HTB_GREEN, HTB_BG_CARD, HTB_TEXT_DIM, HTB_BG_CARD_ELEVATED,
-    BTN_PRIMARY, BTN_DANGER, BTN_DEFAULT
+    HTB_GREEN, HTB_TEXT_DIM, HTB_TEXT_MAIN, HTB_TEXT_SEC, FONT_FAMILY_MONO
 )
 from ui.widgets.activity_item import ActivityItem
+from ui.widgets.modern_widgets import (
+    ModernButton, ModernCard, SimpleStatCard, ModernInput
+)
 from utils.debug import debug_log
+import qtawesome as qta
 
 
 class DashboardWorker(QObject):
@@ -120,288 +123,224 @@ class DashboardPage(QWidget):
         self._activity_countdown.timeout.connect(self._update_activity_countdown)
         self._activity_seconds_left = 15
         self._activity_items: List[ActivityItem] = []
+        self._zombie_threads: List[QThread] = [] # Keep threads alive until they finish
         self._setup_ui()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(22)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(25)
         
-        # Welcome
+        # Welcome Header
         self.welcome_label = QLabel("Welcome back!")
-        self.welcome_label.setStyleSheet("font-size: 28px; font-weight: 700; letter-spacing: -0.5px;")
-        self.welcome_label.setWordWrap(True)
+        self.welcome_label.setStyleSheet(f"font-size: 32px; font-weight: 800; letter-spacing: -1px; color: {HTB_TEXT_MAIN};")
         layout.addWidget(self.welcome_label)
         
-        # Stats row
-        stats_widget = QWidget()
-        stats_layout = QHBoxLayout(stats_widget)
-        stats_layout.setContentsMargins(0, 0, 0, 0)
-        stats_layout.setSpacing(16)
+        # Stats Grid
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(20)
         
-        # User card con avatar
-        self.user_card = self._create_user_card_with_avatar()
-        self.sub_card = self._create_stat_card("👑", "Subscription", "-")
-        self.rank_card = self._create_stat_card("📊", "Server", "-")
-        
+        # User Card
+        self.user_card = self._create_user_card()
         stats_layout.addWidget(self.user_card)
+        
+        # Sub Card
+        self.sub_card = SimpleStatCard("Subscription", "-", "fa5s.crown", HTB_GREEN)
         stats_layout.addWidget(self.sub_card)
+        
+        # Rank Card
+        self.rank_card = SimpleStatCard("Server", "-", "fa5s.server", HTB_GREEN)
         stats_layout.addWidget(self.rank_card)
-        stats_layout.addStretch()
         
-        layout.addWidget(stats_widget)
+        layout.addLayout(stats_layout)
         
-        # Active Machine
-        section1 = QLabel("ACTIVE MACHINE")
-        section1.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;")
+        # Active Machine Section
+        section1 = QLabel("ACTIVE OPERATION")
+        section1.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; margin-top: 10px;")
         layout.addWidget(section1)
         
-        self.machine_frame = QFrame()
-        self.machine_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
-        self.machine_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.machine_card = ModernCard()
+        machine_layout = QVBoxLayout(self.machine_card)
+        machine_layout.setContentsMargins(30, 25, 30, 25)
+        machine_layout.setSpacing(15)
         
-        machine_layout = QVBoxLayout(self.machine_frame)
-        machine_layout.setContentsMargins(24, 20, 24, 20)
-        machine_layout.setSpacing(8)
-        
-        # Header row con avatar + nombre
-        machine_header = QHBoxLayout()
-        machine_header.setSpacing(14)
+        # Top Row: Avatar + Info + IP
+        top_row = QHBoxLayout()
+        top_row.setSpacing(20)
         
         self.machine_avatar = QLabel()
-        self.machine_avatar.setFixedSize(48, 48)
-        self.machine_avatar.setStyleSheet("background-color: #1a2638; border-radius: 8px;")
+        self.machine_avatar.setFixedSize(60, 60)
+        self.machine_avatar.setStyleSheet("background-color: #1a2638; border-radius: 12px;")
         self.machine_avatar.setAlignment(Qt.AlignCenter)
         self.machine_avatar.setVisible(False)
-        machine_header.addWidget(self.machine_avatar)
+        top_row.addWidget(self.machine_avatar)
         
-        machine_info_col = QVBoxLayout()
-        machine_info_col.setSpacing(4)
+        info_col = QVBoxLayout()
+        info_col.setSpacing(5)
         
         self.machine_name = QLabel("No active machine")
-        self.machine_name.setStyleSheet("font-size: 18px; font-weight: 600; background: transparent; border: none;")
-        self.machine_name.setWordWrap(True)
-        machine_info_col.addWidget(self.machine_name)
+        self.machine_name.setStyleSheet("font-size: 22px; font-weight: 700;")
+        info_col.addWidget(self.machine_name)
         
-        self.machine_info = QLabel("Spawn a machine from the Machines page to start hacking")
-        self.machine_info.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 14px; background: transparent; border: none;")
+        self.machine_info = QLabel("Spawn a machine to start hacking")
+        self.machine_info.setStyleSheet(f"color: {HTB_TEXT_SEC}; font-size: 14px;")
         self.machine_info.setWordWrap(True)
-        machine_info_col.addWidget(self.machine_info)
+        info_col.addWidget(self.machine_info)
         
-        machine_header.addLayout(machine_info_col)
-        machine_header.addStretch()
-        machine_layout.addLayout(machine_header)
+        top_row.addLayout(info_col)
+        top_row.addStretch()
         
-        ip_row = QHBoxLayout()
-        ip_row.setSpacing(10)
+        # IP Display
         self.machine_ip = QLabel("")
-        self.machine_ip.setStyleSheet(f"color: {HTB_GREEN}; font-size: 16px; font-weight: 600; font-family: monospace; background: transparent; border: none;")
-        ip_row.addWidget(self.machine_ip)
-        self.copy_ip_btn = QPushButton("📋 Copy IP")
-        self.copy_ip_btn.setStyleSheet(BTN_DEFAULT)
-        self.copy_ip_btn.setToolTip("Copy IP to clipboard")
-        self.copy_ip_btn.setCursor(Qt.PointingHandCursor)
+        self.machine_ip.setStyleSheet(f"color: {HTB_GREEN}; font-size: 18px; font-weight: 700; font-family: {FONT_FAMILY_MONO};")
+        top_row.addWidget(self.machine_ip)
+        
+        self.copy_ip_btn = ModernButton("", "fa5s.copy", "ghost")
+        self.copy_ip_btn.setToolTip("Copy IP")
+        self.copy_ip_btn.setFixedSize(40, 40)
         self.copy_ip_btn.clicked.connect(self._copy_ip_to_clipboard)
         self.copy_ip_btn.setVisible(False)
-        ip_row.addWidget(self.copy_ip_btn)
-        ip_row.addStretch()
-        machine_layout.addLayout(ip_row)
+        top_row.addWidget(self.copy_ip_btn)
         
-        # Acciones: Stop, Reset, Submit flag (misma estética que machine detail)
+        machine_layout.addLayout(top_row)
+        
+        # Actions Area
         self.actions_widget = QWidget()
         actions_layout = QVBoxLayout(self.actions_widget)
-        actions_layout.setContentsMargins(0, 14, 0, 0)
-        actions_layout.setSpacing(12)
+        actions_layout.setContentsMargins(0, 15, 0, 0)
+        actions_layout.setSpacing(15)
+        
+        # Buttons Row
         btns_row = QHBoxLayout()
-        btns_row.setSpacing(12)
-        self.stop_btn = QPushButton("⏹ Stop")
-        self.stop_btn.setStyleSheet(BTN_DANGER)
-        self.stop_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_btn = ModernButton("Stop Machine", "fa5s.stop", "danger")
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
         btns_row.addWidget(self.stop_btn)
-        self.reset_btn = QPushButton("🔄 Reset")
-        self.reset_btn.setStyleSheet(BTN_DEFAULT)
-        self.reset_btn.setCursor(Qt.PointingHandCursor)
+        
+        self.reset_btn = ModernButton("Reset", "fa5s.redo", "ghost")
+        self.reset_btn.clicked.connect(self._on_reset_clicked)
         btns_row.addWidget(self.reset_btn)
+        
         btns_row.addStretch()
         actions_layout.addLayout(btns_row)
+        
+        # Flag Input Row
         flag_row = QHBoxLayout()
-        flag_row.setSpacing(12)
-        self.flag_input = QLineEdit()
-        self.flag_input.setObjectName("flag_input")
-        self.flag_input.setPlaceholderText("Enter the flag")
-        self.flag_input.setMinimumHeight(42)
-        self.flag_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.flag_input = ModernInput("Enter flag hash...")
         flag_row.addWidget(self.flag_input)
-        self.submit_flag_btn = QPushButton("🚩 Submit Flag")
-        self.submit_flag_btn.setStyleSheet(BTN_PRIMARY)
-        self.submit_flag_btn.setCursor(Qt.PointingHandCursor)
+        
+        self.submit_flag_btn = ModernButton("Submit Flag", "fa5s.flag", "primary")
+        self.submit_flag_btn.clicked.connect(self._on_submit_flag_clicked)
         flag_row.addWidget(self.submit_flag_btn)
+        
         actions_layout.addLayout(flag_row)
-        actions_layout.setContentsMargins(0, 14, 0, 20)  # Add bottom margin for spacing
+        
         machine_layout.addWidget(self.actions_widget)
         self.actions_widget.setVisible(False)
-        self.stop_btn.clicked.connect(self._on_stop_clicked)
-        self.reset_btn.clicked.connect(self._on_reset_clicked)
-        self.submit_flag_btn.clicked.connect(self._on_submit_flag_clicked)
         
-        layout.addWidget(self.machine_frame)
+        layout.addWidget(self.machine_card)
         
-        # Activity (solo visible si hay máquina activa)
+        # Activity Section (Collapsible/Conditional)
         activity_title_row = QHBoxLayout()
-        self.activity_header = QLabel("ACTIVITY")
-        self.activity_header.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;")
+        activity_title_row.setContentsMargins(0, 10, 0, 0)
+        self.activity_header = QLabel("RECENT ACTIVITY")
+        self.activity_header.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px; font-weight: 800; letter-spacing: 1.5px;")
         activity_title_row.addWidget(self.activity_header)
+        
         activity_title_row.addStretch()
         self.activity_refresh_label = QLabel("Refreshing in 15s")
-        self.activity_refresh_label.setStyleSheet(f"color: {HTB_GREEN}; font-size: 11px; font-weight: 500;")
+        self.activity_refresh_label.setStyleSheet(f"color: {HTB_GREEN}; font-size: 11px; font-weight: 600;")
         activity_title_row.addWidget(self.activity_refresh_label)
+        
         layout.addLayout(activity_title_row)
+        
         self.activity_scroll = QScrollArea()
         self.activity_scroll.setWidgetResizable(True)
-        self.activity_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.activity_scroll.setStyleSheet("background: transparent; border: none;")
-        self.activity_scroll.setFrameShape(QFrame.NoFrame)
         self._activity_container = QWidget()
         self._activity_layout = QVBoxLayout(self._activity_container)
-        self._activity_layout.setContentsMargins(0, 0, 8, 0)
+        self._activity_layout.setContentsMargins(0, 0, 10, 0)
         self._activity_layout.setSpacing(8)
         self._activity_layout.setAlignment(Qt.AlignTop)
         self.activity_scroll.setWidget(self._activity_container)
-        self.activity_scroll.setMinimumHeight(180)
-        self.activity_scroll.setMaximumHeight(240)
+        self.activity_scroll.setMinimumHeight(200)
         layout.addWidget(self.activity_scroll)
+        
         self.activity_header.setVisible(False)
         self.activity_refresh_label.setVisible(False)
         self.activity_scroll.setVisible(False)
         
-        # VPN
-        section2 = QLabel("VPN STATUS")
-        section2.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;")
-        layout.addWidget(section2)
-        
-        self.vpn_frame = QFrame()
-        self.vpn_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
-        self.vpn_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        
-        vpn_layout = QHBoxLayout(self.vpn_frame)
-        vpn_layout.setContentsMargins(24, 20, 24, 20)
-        
-        self.vpn_status = QLabel("🔴 Disconnected")
-        self.vpn_status.setStyleSheet("font-size: 16px; font-weight: 500;")
-        vpn_layout.addWidget(self.vpn_status)
-        
-        vpn_layout.addStretch()
-        
-        self.vpn_details = QLabel("Connect via VPN to access machines")
-        self.vpn_details.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 14px;")
-        self.vpn_details.setWordWrap(True)
-        vpn_layout.addWidget(self.vpn_details)
-        
-        layout.addWidget(self.vpn_frame)
         layout.addStretch()
-    
-    def _create_stat_card(self, icon: str, title: str, value: str) -> QFrame:
-        card = QFrame()
-        card.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
-        card.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
+
+    def _create_user_card(self) -> ModernCard:
+        card = ModernCard()
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
         
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
-        
-        header = QLabel(f"{icon} {title}")
-        header.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 12px; font-weight: 500;")
-        layout.addWidget(header)
-        
-        value_lbl = QLabel(value)
-        value_lbl.setObjectName("value")
-        value_lbl.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {HTB_GREEN};")
-        value_lbl.setWordWrap(True)
-        layout.addWidget(value_lbl)
-        
-        return card
-    
-    def _create_user_card_with_avatar(self) -> QFrame:
-        """Crear tarjeta de usuario con avatar."""
-        card = QFrame()
-        card.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
-        card.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
-        
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
-        
-        header = QLabel("👤 Username")
-        header.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 12px; font-weight: 500;")
-        layout.addWidget(header)
-        
-        # Contenedor horizontal para avatar + nombre
-        user_row = QWidget()
-        user_layout = QHBoxLayout(user_row)
-        user_layout.setContentsMargins(0, 0, 0, 0)
-        user_layout.setSpacing(10)
-        
-        # Avatar (placeholder si no hay URL; se rellena con imagen o inicial)
         self.avatar_label = QLabel()
-        self.avatar_label.setFixedSize(40, 40)
-        self.avatar_label.setStyleSheet(
-            "background-color: #1a2638; border-radius: 20px; "
-            "color: #9fef00; font-weight: 700; font-size: 16px;"
-        )
+        self.avatar_label.setFixedSize(50, 50)
+        self.avatar_label.setStyleSheet("background-color: #1a2638; border-radius: 25px;")
         self.avatar_label.setAlignment(Qt.AlignCenter)
-        user_layout.addWidget(self.avatar_label)
+        layout.addWidget(self.avatar_label)
         
-        # Username
+        vbox = QVBoxLayout()
+        vbox.setSpacing(4)
+        
+        lbl = QLabel("USERNAME")
+        lbl.setStyleSheet(f"color: {HTB_TEXT_SEC}; font-size: 11px; font-weight: 700; letter-spacing: 1px;")
+        vbox.addWidget(lbl)
+        
         self.username_label = QLabel("-")
-        self.username_label.setObjectName("value")
-        self.username_label.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {HTB_GREEN};")
-        self.username_label.setWordWrap(True)
-        user_layout.addWidget(self.username_label)
-        user_layout.addStretch()
+        self.username_label.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {HTB_GREEN};")
+        vbox.addWidget(self.username_label)
         
-        layout.addWidget(user_row)
-        
+        layout.addLayout(vbox)
+        layout.addStretch()
         return card
-    
+
     def _load_avatar(self, avatar_url: str):
-        """Descargar avatar desde URL."""
-        if not avatar_url:
-            return
+        if not avatar_url: return
         request = QNetworkRequest(QUrl(avatar_url))
         self._network_manager.get(request)
     
     def _set_avatar_placeholder(self, username: str):
-        """Mostrar inicial del usuario cuando no hay avatar."""
         initial = (username.strip() or "?")[0].upper()
         self.avatar_label.setText(initial)
         self.avatar_label.setPixmap(QPixmap())
         self.avatar_label.setStyleSheet(
-            "background-color: #1a2638; border-radius: 20px; "
-            "color: #9fef00; font-weight: 700; font-size: 16px;"
+            f"background-color: #1a2638; border-radius: 25px; color: {HTB_GREEN}; font-weight: 700; font-size: 20px;"
         )
 
     @Slot(QNetworkReply)
     def _on_avatar_loaded(self, reply: QNetworkReply):
-        """Callback cuando el avatar se descarga."""
         if reply.error() == QNetworkReply.NoError:
             data = reply.readAll()
             pixmap = QPixmap()
             pixmap.loadFromData(data)
             if not pixmap.isNull():
-                scaled = pixmap.scaled(40, 40, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                self.avatar_label.setPixmap(scaled)
+                scaled = pixmap.scaled(50, 50, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                # Circular mask
+                circular = QPixmap(50, 50)
+                circular.fill(Qt.transparent)
+                from PySide6.QtGui import QPainter, QPainterPath
+                painter = QPainter(circular)
+                painter.setRenderHint(QPainter.Antialiasing)
+                path = QPainterPath()
+                path.addEllipse(0, 0, 50, 50)
+                painter.setClipPath(path)
+                painter.drawPixmap(0, 0, scaled)
+                painter.end()
+                
+                self.avatar_label.setPixmap(circular)
                 self.avatar_label.setText("")
-                self.avatar_label.setStyleSheet("border-radius: 20px; background: transparent;")
+                self.avatar_label.setStyleSheet("background: transparent;")
         reply.deleteLater()
     
-    def _update_card(self, card: QFrame, value: str):
-        lbl = card.findChild(QLabel, "value")
-        if lbl:
-            lbl.setText(value)
+    def _update_card(self, card: ModernCard, value: str):
+        if hasattr(card, "set_value"):
+            card.set_value(value)
     
     def load_data(self):
-        if self._loading:
-            return
+        if self._loading: return
         self._loading = True
         self._cleanup_thread()
         
@@ -413,15 +352,46 @@ class DashboardPage(QWidget):
         self._worker.error.connect(self._on_error)
         self._thread.start()
     
+    def _safe_cleanup_thread(self, thread: QThread, worker: QObject):
+        """
+        Safely cleanup a thread. If it's running, detach it and let it finish (zombie).
+        We disconnect signals so it doesn't try to update the UI of a potentially hidden/destroyed page.
+        """
+        if not thread:
+            return
+            
+        # 1. Disconnect all signals from worker to prevent UI updates
+        if worker:
+            try: worker.disconnect()
+            except: pass
+        
+        # 2. Check if running
+        if thread.isRunning():
+            # It's stuck (maybe in API retry loop). 
+            # We can't force kill it without risk of crash/leak.
+            # We move it to zombies and let it die when it finishes (if ever).
+            self._zombie_threads.append(thread)
+            
+            # When finished, remove from zombies and delete
+            # We use a lambda with default arg to capture the specific thread instance
+            thread.finished.connect(lambda t=thread: self._on_zombie_finished(t))
+            
+            # Advise it to quit (in case it enters event loop)
+            thread.quit()
+        else:
+            # Not running, just delete
+            thread.deleteLater()
+            if worker: worker.deleteLater()
+
+    def _on_zombie_finished(self, thread: QThread):
+        if thread in self._zombie_threads:
+            self._zombie_threads.remove(thread)
+        thread.deleteLater()
+
     def _cleanup_thread(self):
-        if self._thread:
-            if self._thread.isRunning():
-                self._thread.quit()
-                if not self._thread.wait(3000):
-                    self._thread.terminate()
-                    self._thread.wait(500)
-            self._thread = None
-            self._worker = None
+        self._safe_cleanup_thread(self._thread, self._worker)
+        self._thread = None
+        self._worker = None
 
     def stop_background_tasks(self):
         self._loading = False
@@ -432,35 +402,23 @@ class DashboardPage(QWidget):
         self._cleanup_action_thread()
 
     def _cleanup_activity_thread(self):
-        if self._activity_thread:
-            if self._activity_thread.isRunning():
-                self._activity_thread.quit()
-                if not self._activity_thread.wait(3000):
-                    self._activity_thread.terminate()
-                    self._activity_thread.wait(500)
-            self._activity_thread = None
-            self._activity_worker = None
+        self._safe_cleanup_thread(self._activity_thread, self._activity_worker)
+        self._activity_thread = None
+        self._activity_worker = None
 
     def _cleanup_action_thread(self):
-        if self._action_thread:
-            if self._action_thread.isRunning():
-                self._action_thread.quit()
-                if not self._action_thread.wait(3000):
-                    self._action_thread.terminate()
-                    self._action_thread.wait(500)
-            self._action_thread = None
-            self._action_worker = None
+        self._safe_cleanup_thread(self._action_thread, self._action_worker)
+        self._action_thread = None
+        self._action_worker = None
 
     def _copy_ip_to_clipboard(self):
         ip = self.machine_ip.text().strip()
-        if ip and not ip.startswith("⏳") and not ip.startswith("❌"):
+        if ip and not ip.startswith("Joining"):
             cb = QApplication.clipboard()
             if cb:
                 cb.setText(ip)
                 QMessageBox.information(self, "Copied", f"IP copied: {ip}")
-        else:
-            QMessageBox.information(self, "Copy IP", "No IP available yet. Wait for the machine to start.")
-
+    
     def _update_activity_countdown(self):
         self._activity_seconds_left -= 1
         if self._activity_seconds_left <= 0:
@@ -468,8 +426,7 @@ class DashboardPage(QWidget):
         self.activity_refresh_label.setText(f"Refreshing in {self._activity_seconds_left}s")
 
     def _load_activity(self):
-        if not self._active_machine_id:
-            return
+        if not self._active_machine_id: return
         self._cleanup_activity_thread()
         self._activity_seconds_left = 15
         self.activity_refresh_label.setText("Refreshing in 15s")
@@ -489,15 +446,18 @@ class DashboardPage(QWidget):
         for w in self._activity_items:
             w.deleteLater()
         self._activity_items.clear()
+        
+        # Clear layout safely
         while self._activity_layout.count():
             item = self._activity_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        
         for i, entry in enumerate(activity[:15]):
             date_diff = entry.get("date_diff", "")
             user_name = entry.get("user_name", "")
-            entry_type = entry.get("type", "")  # "blood", "user", or "root"
-            blood_type = entry.get("blood_type", "")  # "user" or "root" when type=="blood"
+            entry_type = entry.get("type", "")
+            blood_type = entry.get("blood_type", "")
             avatar_url = entry.get("user_avatar", "") or entry.get("avatar", "")
             if avatar_url and not avatar_url.startswith("http"):
                 avatar_url = f"https://labs.hackthebox.com{avatar_url}"
@@ -532,47 +492,41 @@ class DashboardPage(QWidget):
         pixmap = QPixmap()
         pixmap.loadFromData(data)
         if not pixmap.isNull():
-            # Escalar y redondear esquinas
             from PySide6.QtGui import QPainter, QPainterPath
-            scaled = pixmap.scaled(48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            rounded = QPixmap(48, 48)
+            scaled = pixmap.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(60, 60)
             rounded.fill(Qt.transparent)
             painter = QPainter(rounded)
             painter.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
-            path.addRoundedRect(0, 0, 48, 48, 8, 8)
+            path.addRoundedRect(0, 0, 60, 60, 12, 12)
             painter.setClipPath(path)
-            painter.drawPixmap(0, 0, 48, 48, scaled)
+            painter.drawPixmap(0, 0, scaled)
             painter.end()
             self.machine_avatar.setPixmap(rounded)
-            self.machine_avatar.setStyleSheet("border-radius: 8px; background: transparent;")
+            self.machine_avatar.setStyleSheet("background: transparent;")
         reply.deleteLater()
 
     def _on_stop_clicked(self):
-        if not self._active_machine_id:
-            return
+        if not self._active_machine_id: return
         r = QMessageBox.question(
             self, "Confirm", "Stop this machine?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        if r != QMessageBox.Yes:
-            return
+        if r != QMessageBox.Yes: return
         self._run_action("terminate")
 
     def _on_reset_clicked(self):
-        if not self._active_machine_id:
-            return
+        if not self._active_machine_id: return
         r = QMessageBox.question(
             self, "Confirm", "Reset this machine?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        if r != QMessageBox.Yes:
-            return
+        if r != QMessageBox.Yes: return
         self._run_action("reset")
 
     def _on_submit_flag_clicked(self):
-        if not self._active_machine_id:
-            return
+        if not self._active_machine_id: return
         flag = self.flag_input.text().strip()
         if not flag:
             QMessageBox.warning(self, "Flag", "Enter a flag.")
@@ -593,11 +547,11 @@ class DashboardPage(QWidget):
     def _on_action_done(self, data: dict):
         self._cleanup_action_thread()
         action = data.get("action", "")
-        msg = data.get("result", {}).get("message", "Done.")
+        msg = data.get("result", {}).get("message", "Action successful.")
         if action == "terminate":
             self._active_machine_id = None
             self.machine_name.setText("No active machine")
-            self.machine_info.setText("Spawn a machine from the Machines page to start hacking")
+            self.machine_info.setText("Spawn a machine to start hacking")
             self.machine_ip.setText("")
             self.copy_ip_btn.setVisible(False)
             self.actions_widget.setVisible(False)
@@ -634,9 +588,9 @@ class DashboardPage(QWidget):
         if "active_machine" in data and data["active_machine"]:
             m = data["active_machine"]
             self._active_machine_id = m.id
-            self.machine_name.setText(f"🖥️ {m.name}")
+            self.machine_name.setText(m.name)
             self.machine_info.setText(m.status_text)
-            ip_text = m.ip if m.ip else "Starting..."
+            ip_text = m.ip if m.ip else "Joining..."
             self.machine_ip.setText(ip_text)
             self.copy_ip_btn.setVisible(bool(m.ip))
             self.actions_widget.setVisible(True)
@@ -648,7 +602,7 @@ class DashboardPage(QWidget):
             self._load_activity()
             self._activity_timer.start()
             self._activity_countdown.start()
-            # Cargar avatar de la máquina
+            
             if m.avatar:
                 self._active_machine_avatar = m.avatar
                 self.machine_avatar.setVisible(True)
@@ -658,9 +612,8 @@ class DashboardPage(QWidget):
                 self.machine_avatar.setVisible(False)
         else:
             self._active_machine_id = None
-            self._active_machine_avatar = ""
             self.machine_name.setText("No active machine")
-            self.machine_info.setText("Spawn a machine from the Machines page to start hacking")
+            self.machine_info.setText("Spawn a machine to start hacking")
             self.machine_ip.setText("")
             self.copy_ip_btn.setVisible(False)
             self.actions_widget.setVisible(False)
@@ -670,21 +623,12 @@ class DashboardPage(QWidget):
             self.machine_avatar.setVisible(False)
             self._activity_timer.stop()
             self._activity_countdown.stop()
-        
-        if "connection" in data and data["connection"]:
-            c = data["connection"]
-            self.vpn_status.setText(f"🟢 {c.server_friendly_name}")
-            self.vpn_details.setText(c.ip_display)
-        else:
-            self.vpn_status.setText("🔴 Disconnected")
-            self.vpn_details.setText("Connect via VPN to access machines")
     
     @Slot(str)
     def _on_error(self, error: str):
         self._loading = False
         self._cleanup_thread()
-        debug_log("DASHBOARD", f"Error: {error}")
-    
+        
     def showEvent(self, event):
         super().showEvent(event)
         self.load_data()

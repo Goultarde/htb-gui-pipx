@@ -1,14 +1,15 @@
 """VPN Page - Borderless HTB Style."""
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QFrame, QMessageBox, QFileDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot, QThread, QObject
 
 from api.endpoints import HTBApi
 from models.connection import Connection
-from ui.styles import HTB_GREEN, HTB_BG_CARD, HTB_TEXT_DIM, BTN_PRIMARY, BTN_DEFAULT
+from ui.styles import HTB_GREEN, HTB_BG_CARD, HTB_BG_MAIN, HTB_TEXT_DIM
+from ui.widgets.modern_widgets import ModernButton
 from utils.debug import debug_log
 
 
@@ -40,6 +41,7 @@ class VPNPage(QWidget):
         self._worker = None
         self._loading = False
         self._loaded = False
+        self._zombie_threads: List[QThread] = []
         self._setup_ui()
     
     def _setup_ui(self):
@@ -84,8 +86,7 @@ class VPNPage(QWidget):
         status_layout.addLayout(status_info)
         status_layout.addStretch()
         
-        refresh_btn = QPushButton("🔄 Refresh")
-        refresh_btn.setStyleSheet(BTN_DEFAULT)
+        refresh_btn = ModernButton(" Refresh", "fa5s.sync-alt", "ghost")
         refresh_btn.clicked.connect(self._force_reload)
         status_layout.addWidget(refresh_btn)
         
@@ -97,7 +98,7 @@ class VPNPage(QWidget):
         layout.addWidget(section2)
         
         dl_frame = QFrame()
-        dl_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
+        dl_frame.setStyleSheet(f"background-color: {HTB_BG_MAIN}; border-radius: 12px;")
         dl_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         dl_layout = QVBoxLayout(dl_frame)
@@ -145,8 +146,7 @@ class VPNPage(QWidget):
         dl_layout.addLayout(row2)
         
         # Download button
-        dl_btn = QPushButton("⬇ Download .ovpn File")
-        dl_btn.setStyleSheet(BTN_PRIMARY)
+        dl_btn = ModernButton(" Download .ovpn File", "fa5s.download", "secondary")
         dl_btn.clicked.connect(self._download)
         dl_layout.addWidget(dl_btn, alignment=Qt.AlignLeft)
         
@@ -178,15 +178,28 @@ class VPNPage(QWidget):
         self._worker.error.connect(self._on_error)
         self._thread.start()
     
+    def _safe_cleanup_thread(self, thread: QThread, worker: QObject):
+        if not thread: return
+        if worker:
+            try: worker.disconnect()
+            except: pass
+        if thread.isRunning():
+            self._zombie_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._on_zombie_finished(t))
+            thread.quit()
+        else:
+            thread.deleteLater()
+            if worker: worker.deleteLater()
+
+    def _on_zombie_finished(self, thread: QThread):
+        if thread in self._zombie_threads:
+            self._zombie_threads.remove(thread)
+        thread.deleteLater()
+
     def _cleanup_thread(self):
-        if self._thread:
-            if self._thread.isRunning():
-                self._thread.quit()
-                if not self._thread.wait(3000):
-                    self._thread.terminate()
-                    self._thread.wait(500)
-            self._thread = None
-            self._worker = None
+        self._safe_cleanup_thread(self._thread, self._worker)
+        self._thread = None
+        self._worker = None
 
     def stop_background_tasks(self):
         """Llamado al cerrar la app para evitar QThread destroyed while running."""

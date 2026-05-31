@@ -5,7 +5,10 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
 
 from models.machine import Machine
-from ui.styles import HTB_GREEN, HTB_BG_CARD, HTB_BG_HOVER, HTB_TEXT_DIM, DIFF_EASY, DIFF_MEDIUM, DIFF_HARD, DIFF_INSANE
+from ui.styles import (
+    HTB_GREEN, HTB_BG_CARD, HTB_BG_HOVER, HTB_TEXT_DIM, HTB_TEXT_SEC, HTB_TEXT_MAIN,
+    HTB_BORDER, DIFF_EASY, DIFF_MEDIUM, DIFF_HARD, DIFF_INSANE
+)
 
 
 class MachineCard(QFrame):
@@ -23,17 +26,23 @@ class MachineCard(QFrame):
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         
         diff_colors = {"easy": DIFF_EASY, "medium": DIFF_MEDIUM, "hard": DIFF_HARD, "insane": DIFF_INSANE}
-        self._color = diff_colors.get(self.machine.difficulty_text.lower(), HTB_TEXT_DIM)
+        self._color = diff_colors.get(self.machine.difficulty_text.lower(), HTB_TEXT_SEC)
         
-        # Estilos sin selector para evitar parse error en Qt
-        self._normal = (
-            f"background-color: {HTB_BG_CARD}; border-radius: 14px; "
-            "border: 1px solid rgba(255, 255, 255, 0.06);"
-        )
-        self._hover = (
-            f"background-color: {HTB_BG_HOVER}; border-radius: 14px; "
-            f"border: 1px solid {HTB_GREEN};"
-        )
+        # Modern Card Styles
+        self._normal = f"""
+            MachineCard {{
+                background-color: {HTB_BG_CARD};
+                border-radius: 12px;
+                border: 1px solid {HTB_BORDER};
+            }}
+        """
+        self._hover = f"""
+            MachineCard {{
+                background-color: {HTB_BG_HOVER};
+                border-radius: 12px;
+                border: 1px solid {HTB_GREEN};
+            }}
+        """
         self.setStyleSheet(self._normal)
         
         layout = QVBoxLayout(self)
@@ -51,22 +60,25 @@ class MachineCard(QFrame):
         self.avatar_label.setAlignment(Qt.AlignCenter)
         top.addWidget(self.avatar_label)
         
+        # OS Icon (using text for now, could be qtawesome if logic allowed)
         os_lbl = QLabel(self.machine.os_icon)
-        os_lbl.setStyleSheet("font-size: 24px; background: transparent; border: none;")
+        os_lbl.setStyleSheet("font-size: 20px; background: transparent; border: none;")
         top.addWidget(os_lbl)
+        
         top.addStretch()
+        
         diff_lbl = QLabel(self.machine.difficulty_text)
         diff_lbl.setStyleSheet(f"color: {self._color}; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; background: transparent; border: none;")
         top.addWidget(diff_lbl)
         layout.addLayout(top)
         
         name = QLabel(self.machine.name)
-        name.setStyleSheet("font-size: 17px; font-weight: 600; background: transparent; border: none;")
+        name.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {HTB_TEXT_MAIN}; background: transparent; border: none;")
         name.setWordWrap(True)
         layout.addWidget(name)
         
         meta = QLabel(f"⭐ {self.machine.rating:.1f}  ·  {self.machine.user_owns_count:,} owns")
-        meta.setStyleSheet(f"color: {HTB_TEXT_DIM}; font-size: 12px; background: transparent; border: none;")
+        meta.setStyleSheet(f"color: {HTB_TEXT_SEC}; font-size: 12px; background: transparent; border: none;")
         layout.addWidget(meta)
         
         layout.addStretch()

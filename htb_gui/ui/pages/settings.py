@@ -8,7 +8,8 @@ from PySide6.QtCore import Qt, Signal
 
 from config import config
 from api.endpoints import HTBApi
-from ui.styles import HTB_GREEN, HTB_BG_CARD, HTB_TEXT_DIM, BTN_PRIMARY, BTN_DEFAULT
+from ui.styles import HTB_GREEN, HTB_BG_CARD, HTB_BG_MAIN, HTB_TEXT_DIM, BTN_PRIMARY, BTN_DEFAULT
+from ui.widgets.modern_widgets import ModernButton
 from utils.debug import debug_log
 
 
@@ -35,7 +36,7 @@ class SettingsPage(QWidget):
         layout.addWidget(section1)
         
         token_frame = QFrame()
-        token_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
+        token_frame.setStyleSheet(f"background-color: {HTB_BG_MAIN}; border-radius: 12px;")
         token_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         token_layout = QVBoxLayout(token_frame)
@@ -63,8 +64,7 @@ class SettingsPage(QWidget):
         self.token_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         input_row.addWidget(self.token_input)
         
-        show_btn = QPushButton("Show")
-        show_btn.setStyleSheet(BTN_DEFAULT)
+        show_btn = ModernButton("Show", btn_type="secondary")
         show_btn.setCheckable(True)
         show_btn.toggled.connect(lambda c: (
             self.token_input.setEchoMode(QLineEdit.Normal if c else QLineEdit.Password),
@@ -78,13 +78,11 @@ class SettingsPage(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
         
-        save_btn = QPushButton("💾 Save Token")
-        save_btn.setStyleSheet(BTN_PRIMARY)
+        save_btn = ModernButton("💾 Save Token", btn_type="secondary")
         save_btn.clicked.connect(self._save_token)
         btn_row.addWidget(save_btn)
         
-        test_btn = QPushButton("🔗 Test Connection")
-        test_btn.setStyleSheet(BTN_DEFAULT)
+        test_btn = ModernButton("🔗 Test Connection", btn_type="secondary")
         test_btn.clicked.connect(self._test_connection)
         btn_row.addWidget(test_btn)
         
@@ -104,7 +102,7 @@ class SettingsPage(QWidget):
         layout.addWidget(section2)
         
         debug_frame = QFrame()
-        debug_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
+        debug_frame.setStyleSheet(f"background-color: {HTB_BG_MAIN}; border-radius: 12px;")
         debug_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         debug_layout = QVBoxLayout(debug_frame)
@@ -129,7 +127,7 @@ class SettingsPage(QWidget):
         layout.addWidget(section3)
         
         about_frame = QFrame()
-        about_frame.setStyleSheet(f"background-color: {HTB_BG_CARD}; border-radius: 12px;")
+        about_frame.setStyleSheet(f"background-color: {HTB_BG_MAIN}; border-radius: 12px;")
         about_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         
         about_layout = QVBoxLayout(about_frame)
